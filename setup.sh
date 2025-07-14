@@ -6,16 +6,19 @@ TUNNEL_ID="06e1e9ae-33f4-45ae-a9b6-9826f897f2a9"
 HOSTNAME="jtanprojects.com"
 
 TUNNEL_JSON_PATH="$HOME/.cloudflared/${TUNNEL_ID}.json"
-CONFIG_MAP_FILE="/cloudflare/configmap.yaml"
-SECRET_FILE="/cloudflare/secrets/secrets.yaml"
-DEPLOYMENT_FILE="/cloudflare/deployment.yaml"
-DEBUG_POD_FILE="debug-pod.yaml"
+TUNNEL_JSON_PATH2="$HOME/.cloudflared/tunnel.json"
+
+CONFIG_MAP_FILE="./cloudflare/configmap.yaml"
+SECRET_FILE="./cloudflare/secrets/secrets.yaml"
+DEPLOYMENT_FILE="./cloudflare/deployment.yaml"
+DEBUG_POD_FILE="./cloudflare/debug-pod.yaml"
 
 echo "Creating namespace 'cloudflared' if not exists..."
 sudo kubectl get ns cloudflared >/dev/null 2>&1 || sudo kubectl create ns cloudflared
 
-echo "Encoding tunnel.json..."
-ENCODED_TUNNEL_JSON=$(base64 -w 0 "$TUNNEL_JSON_PATH")
+echo "Creating and Encoding tunnel.json..."
+ENCODED_TUNNEL_JSON=$(base64 "$TUNNEL_JSON_PATH" | tr -d '\n')
+cat $TUNNEL_JSON_PATH > $TUNNEL_JSON_PATH2
 
 echo "Generating cloudflared-auth secret manifest..."
 
