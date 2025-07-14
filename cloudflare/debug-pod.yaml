@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-config-check
+  namespace: cloudflared
+spec:
+  containers:
+    - name: debug
+      image: alpine
+      command: ["sleep", "3600"]
+      volumeMounts:
+        - name: cloudflared-auth
+          mountPath: /etc/cloudflared/tunnel.json
+          subPath: tunnel.json
+          readOnly: true
+        - name: cloudflared-config
+          mountPath: /etc/cloudflared/config.yml
+          subPath: config.yml
+          readOnly: true
+  volumes:
+    - name: cloudflared-auth
+      secret:
+        secretName: cloudflared-auth
+    - name: cloudflared-config
+      configMap:
+        name: cloudflared-config

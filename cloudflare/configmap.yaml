@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflared
+data:
+  config.yml: |
+    tunnel: 06e1e9ae-33f4-45ae-a9b6-9826f897f2a9
+    credentials-file: /etc/cloudflared/tunnel.json
+    no-autoupdate: true
+    ingress:
+      - hostname: example.jtanprojects.com
+        service: http://web.default.svc.cluster.local:80
+      - hostname: second.jtanprojects.com
+        service: http://second.default.svc.cluster.local:80
+      - hostname: echo.jtanprojects.com
+        service: http://echo.default.svc.cluster.local:80
+      - service: http_status:404

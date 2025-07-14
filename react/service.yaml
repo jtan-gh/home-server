@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: second
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: second
+  template:
+    metadata:
+      labels:
+        app: second
+    spec:
+      containers:
+        - name: second
+          image: jtandockerhub/react-test-app:v1.0.0
+          ports:
+            - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: second
+  namespace: default
+spec:
+  selector:
+    app: second
+  ports:
+    - port: 80
+      targetPort: 3000

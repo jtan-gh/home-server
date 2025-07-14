@@ -1,0 +1,171 @@
+✅ Step 0: Pre-existing Cloudflare Tunnel Files
+You already have:
+
+bash
+Copy
+Edit
+~/.cloudflared/
+├── 06e1e9ae-33f4-45ae-a9b6-9826f897f2a9.json  # Tunnel ID file
+├── cert.pem                                  # Used for login + tunnel creation
+├── tunnel.json                               # Credentials for running the tunnel
+✅ Step 1: Create the cloudflared-auth Secret (YAML version)
+
+Run this on your host (where the valid tunnel.json lives):
+
+bash
+Copy
+Edit
+base64 -w 0 ~/.cloudflared/06e1e9ae-33f4-45ae-a9b6-9826f897f2a9.json
+
+
+Create a file called cloudflared-secret.yaml:
+yaml
+Copy
+Edit
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflared-auth
+  namespace: cloudflared
+type: Opaque
+data:
+  tunnel.json: <base64-encoded-contents>
+Apply it:
+
+bash
+Copy
+Edit
+kubectl apply -f cloudflared-secret.yaml
+✅ Step 2: Create the cloudflared-config ConfigMap
+Create cloudflared-configmap.yaml:
+
+yaml
+Copy
+Edit
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflared
+data:
+  config.yml: |
+    tunnel: 06e1e9ae-33f4-45ae-a9b6-9826f897f2a9
+    credentials-file: /etc/cloudflared/tunnel.json
+    no-autoupdate: true
+    ingress:
+      - hostname: example.jtanprojects.com
+        service: http://example.default.svc.cluster.local:80
+      - service: http_status:404
+Apply it:
+
+bash
+Copy
+Edit
+kubectl apply -f cloudflared-configmap.yaml
+You can update this anytime using kubectl apply -f again.
+
+✅ Step 3: Deploy cloudflared Tunnel
+Make sure your cloudflared-deployment.yaml looks like this:
+
+yaml
+Copy
+Edit
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-tunnel
+  namespace: cloudflared
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared-tunnel
+  template:
+    metadata:
+      labels:
+        app: cloudflared-tunnel
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config.yml
+            - run
+          volumeMounts:
+            - name: cloudflared-auth
+              mountPath: /etc/cloudflared/tunnel.json
+              subPath: tunnel.json
+              readOnly: true
+            - name: cloudflared-config
+              mountPath: /etc/cloudflared/config.yml
+              subPath: config.yml
+              readOnly: true
+      volumes:
+        - name: cloudflared-auth
+          secret:
+            secretName: cloudflared-auth
+        - name: cloudflared-config
+          configMap:
+            name: cloudflared-config
+Apply it:
+
+bash
+Copy
+Edit
+kubectl apply -f cloudflared-deployment.yaml
+✅ Step 4: (Optional) Create Debug Pod
+If you want to inspect what's mounted inside the container:
+
+yaml
+Copy
+Edit
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-config-check
+  namespace: cloudflared
+spec:
+  containers:
+    - name: debug
+      image: alpine
+      command: ["/bin/sh", "-c", "sleep 100000"]
+      volumeMounts:
+        - name: config
+          mountPath: /etc/cloudflared
+  volumes:
+    - name: config
+      configMap:
+        name: cloudflared-config
+Apply with:
+
+bash
+Copy
+Edit
+kubectl apply -f debug-pod.yaml
+Then exec:
+
+bash
+Copy
+Edit
+kubectl exec -n cloudflared -it debug-config-check -- sh
+✅ Step 5: Add New Services and Ingresses
+To expose a new service:
+
+Create its Deployment and Service YAML
+
+Add an ingress rule to the cloudflared-configmap.yaml
+
+Apply the updated config map:
+
+bash
+Copy
+Edit
+kubectl apply -f cloudflared-configmap.yaml
+Restart Cloudflared:
+
+bash
+Copy
+Edit
+kubectl rollout restart deployment cloudflared-tunnel -n cloudflared
