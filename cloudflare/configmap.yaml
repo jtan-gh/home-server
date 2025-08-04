@@ -11,8 +11,12 @@ data:
     ingress:
       - hostname: example.jtanprojects.com
         service: http://web.default.svc.cluster.local:80
-      - hostname: second.jtanprojects.com
-        service: http://second.default.svc.cluster.local:80
+      - hostname: fitness.jtanprojects.com
+        service: http://fitness.default.svc.cluster.local:80
       - hostname: echo.jtanprojects.com
         service: http://echo.default.svc.cluster.local:80
+      - hostname: cnn.jtanprojects.com
+        service: http://cnn-service.default.svc.cluster.local:8501
+      - hostname: reload.jtanprojects.com
+        service: http://example.default.svc.cluster.local:80
       - service: http_status:404
