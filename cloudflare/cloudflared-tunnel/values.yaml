@@ -1,0 +1,22 @@
+config:
+  tunnel: 06e1e9ae-33f4-45ae-a9b6-9826f897f2a9
+  credentialsFile: /etc/cloudflared/tunnel.json
+  noAutoupdate: true
+  ingress:
+    - hostname: example.jtanprojects.com
+      service: http://web.default.svc.cluster.local:80
+    - hostname: fitness.jtanprojects.com
+      service: http://fitness.default.svc.cluster.local:80
+    - hostname: echo.jtanprojects.com
+      service: http://echo.default.svc.cluster.local:80
+    - hostname: cnn.jtanprojects.com
+      service: http://cnn-service.default.svc.cluster.local:8501
+    - hostname: reload.jtanprojects.com
+      service: http://fitness.default.svc.cluster.local:80
+    ## last one must be http_status 404
+    - service: http_status:404
+
+replicaCount: 2
+image:
+  repository: cloudflare/cloudflared
+  tag: latest

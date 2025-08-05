@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: cloudflared
+data:
+  config.yml: |
+    tunnel: {{ .Values.config.tunnel }}
+    credentials-file: {{ .Values.config.credentialsFile }}
+    no-autoupdate: {{ .Values.config.noAutoupdate }}
+    ingress:
+    {{- range .Values.config.ingress }}
+      - hostname: {{ .hostname | quote }}
+        service: {{ .service | quote }}
+    {{- end }}

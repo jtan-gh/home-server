@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: cloudflared
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ include "cloudflared.configChecksum" . }}
+    spec:
+      containers:
+        - name: cloudflared
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config.yml
+            - run
+          volumeMounts:
+            - name: cloudflared-auth
+              mountPath: /etc/cloudflared/tunnel.json
+              subPath: tunnel.json
+              readOnly: true
+            - name: cloudflared-config
+              mountPath: /etc/cloudflared/config.yml
+              subPath: config.yml
+              readOnly: true
+      volumes:
+        - name: cloudflared-auth
+          secret:
+            secretName: cloudflared-auth
+        - name: cloudflared-config
+          configMap:
+            name: {{ .Release.Name }}
