@@ -1,0 +1,215 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencloud
+  namespace: opencloud
+  labels:
+    app: opencloud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opencloud
+  template:
+    metadata:
+      labels:
+        app: opencloud
+    spec:
+      # All containers run as root to match Docker Compose behavior (optional)
+      securityContext:
+        runAsUser: 0
+        fsGroup: 0
+
+      # Volumes map directly to your host folders
+      volumes:
+        - name: certs
+          hostPath:
+            path: /home-server/opencloud/certs
+            type: DirectoryOrCreate
+        - name: configs
+          hostPath:
+            path: /home-server/opencloud/configs
+            type: DirectoryOrCreate
+        - name: data
+          hostPath:
+            path: /home-server/opencloud/data
+            type: DirectoryOrCreate
+
+      # Init containers run sequentially
+      initContainers:
+        # 1. Certgen – identical to docker-compose certgen service
+        - name: certgen
+          image: alpine/openssl
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+
+              # Generate CA if it doesn't exist
+              if [ ! -f /certs/ca.pem ]; then
+                echo "Creating CA..."
+                openssl genrsa -out /certs/ca.key 4096
+                openssl req -x509 -new -nodes -key /certs/ca.key -sha256 -days 3650 \
+                  -out /certs/ca.pem -subj "/CN=OpenCloud-Local-CA"
+              fi
+
+              # Generate server certificate if it doesn't exist
+              if [ ! -f /certs/server.pem ]; then
+                echo "Creating server cert..."
+
+                # Create OpenSSL config file with echo commands
+                echo "[ req ]" > /certs/server.cnf
+                echo "prompt = no" >> /certs/server.cnf
+                echo "distinguished_name = dn" >> /certs/server.cnf
+                echo "req_extensions = req_ext" >> /certs/server.cnf
+                echo "" >> /certs/server.cnf
+                echo "[ dn ]" >> /certs/server.cnf
+                echo "CN = opencloud" >> /certs/server.cnf
+                echo "" >> /certs/server.cnf
+                echo "[ req_ext ]" >> /certs/server.cnf
+                echo "subjectAltName = @alt_names" >> /certs/server.cnf
+                echo "" >> /certs/server.cnf
+                echo "[ alt_names ]" >> /certs/server.cnf
+                echo "DNS.1 = opencloud" >> /certs/server.cnf
+                echo "DNS.2 = localhost" >> /certs/server.cnf
+                echo "DNS.3 = host.docker.internal" >> /certs/server.cnf
+                echo "IP.1 = 127.0.0.1" >> /certs/server.cnf
+                echo "IP.2 = 192.168.1.72" >> /certs/server.cnf
+
+                # Generate certificate
+                openssl genrsa -out /certs/server.key 2048
+                openssl req -new -key /certs/server.key -out /certs/server.csr -config /certs/server.cnf
+                openssl x509 -req -in /certs/server.csr -CA /certs/ca.pem -CAkey /certs/ca.key \
+                  -CAcreateserial -out /certs/server.pem -days 825 -sha256 \
+                  -extensions req_ext -extfile /certs/server.cnf
+
+                echo "Certificate created successfully!"
+                echo "Certificate contains the following SANs:"
+                openssl x509 -in /certs/server.pem -text -noout | grep -A1 "Subject Alternative Name"
+              fi
+
+              # Set permissions
+              chmod 644 /certs/*.pem /certs/*.key 2>/dev/null || true
+              echo "Certificates ready!"
+
+        # 2. OpenCloud init – identical to opencloud-init service
+        - name: init
+          image: opencloudeu/opencloud-rolling:latest
+          volumeMounts:
+            - name: configs
+              mountPath: /etc/opencloud
+            - name: data
+              mountPath: /var/lib/opencloud
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+          env:
+            - name: OC_URL
+              value: "https://192.168.1.72:32000" # Using NodePort; adjust if needed
+            - name: IDM_ISSUER_URL
+              value: "https://192.168.1.72:32000"
+            - name: OC_INSECURE
+              value: "true"
+            - name: JWT_SECRET
+              value: "WsAm59YfhLaTER2SXJ"
+            - name: IDM_ADMIN_USERNAME
+              value: "admin"
+            - name: IDM_ADMIN_PASSWORD
+              value: "admin"
+            - name: PROXY_HTTPS_ADDR
+              value: "0.0.0.0:9200"
+            - name: PROXY_TLS_CERT
+              value: "/certs/server.pem"
+            - name: PROXY_TLS_KEY
+              value: "/certs/server.key"
+            - name: PROXY_TLS_CA
+              value: "/certs/ca.pem"
+            - name: PROXY_SKIP_VERIFY_TLS
+              value: "true"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Running OpenCloud init..."
+              if [ ! -f /etc/opencloud/.initialized ]; then
+                opencloud init || echo "Init may have already run, continuing..."
+                touch /etc/opencloud/.initialized
+              else
+                echo "OpenCloud already initialized, skipping..."
+              fi
+
+      # Main OpenCloud container
+      containers:
+        - name: opencloud
+          image: opencloudeu/opencloud-rolling:latest
+          ports:
+            - containerPort: 9200
+          volumeMounts:
+            - name: configs
+              mountPath: /etc/opencloud
+            - name: data
+              mountPath: /var/lib/opencloud
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+          env:
+            - name: OC_URL
+              value: "https://192.168.1.72:32000"
+            - name: IDM_ISSUER_URL
+              value: "https://192.168.1.72:32000"
+            - name: OC_INSECURE
+              value: "true"
+            - name: JWT_SECRET
+              value: "WsAm59YfhLaTER2SXJ"
+            - name: IDM_ADMIN_USERNAME
+              value: "admin"
+            - name: IDM_ADMIN_PASSWORD
+              value: "admin"
+            - name: PROXY_HTTPS_ADDR
+              value: "0.0.0.0:9200"
+            - name: PROXY_TLS_CERT
+              value: "/certs/server.pem"
+            - name: PROXY_TLS_KEY
+              value: "/certs/server.key"
+            - name: PROXY_TLS_CA
+              value: "/certs/ca.pem"
+            - name: PROXY_SKIP_VERIFY_TLS
+              value: "true"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting OpenCloud server..."
+              exec opencloud server
+          # Optional probes
+          # livenessProbe:
+          #   httpGet:
+          #     path: /healthz
+          #     port: 9200
+          #     scheme: HTTPS
+          #   initialDelaySeconds: 30
+          # readinessProbe:
+          #   httpGet:
+          #     path: /readyz
+          #     port: 9200
+          #     scheme: HTTPS
+          #   initialDelaySeconds: 20
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencloud
+  namespace: opencloud
+spec:
+  selector:
+    app: opencloud
+  ports:
+    - port: 9200
+      targetPort: 9200
+      nodePort: 32000
+  type: NodePort
