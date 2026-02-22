@@ -1,2 +1,2 @@
 **/secrets/*
-!**/secrets/.gitkeep
+!**/secrets/secrets.example.yaml
