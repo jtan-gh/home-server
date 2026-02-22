@@ -158,9 +158,11 @@ spec:
               readOnly: true
           env:
             - name: OC_URL
-              value: "https://192.168.1.72:32000"
+              value: "https://opencloud.jtanprojects.com"
+##              value: "https://192.168.1.72:32000"
             - name: IDM_ISSUER_URL
-              value: "https://192.168.1.72:32000"
+              value: "https://opencloud.jtanprojects.com"
+##              value: "https://192.168.1.72:32000"
             - name: OC_INSECURE
               value: "true"
             - name: JWT_SECRET
