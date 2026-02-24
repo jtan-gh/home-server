@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: opencloud-config-pv
+  labels:
+    type: opencloud-config
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /opencloud/config
+    type: DirectoryOrCreate
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: opencloud-data-pv
+  labels:
+    type: opencloud-data
+spec:
+  capacity:
+    storage: 256Gi  # Adjust based on your needs
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /opencloud/data
+    type: DirectoryOrCreate
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: opencloud-certs-pv
+  labels:
+    type: opencloud-certs
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /opencloud/certs
+    type: DirectoryOrCreate
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+---
+##temproary. currently using hostpath which will have permission errors. eventually want to change to csi and nas
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: opencloud-permission-setup
+  namespace: opencloud
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: permission-setup
+        image: busybox:latest
+        securityContext:
+          runAsUser: 0  # Run as root just this once
+        command:
+        - sh
+        - -c
+        - |
+          echo "Setting up OpenCloud directories with correct permissions..."
+
+          # Create directories with correct ownership
+          for dir in /opencloud/config /opencloud/data /opencloud/certs; do
+            if [ -d "$dir" ]; then
+              echo "Fixing $dir"
+              chown -R 1000:1000 "$dir"
+              chmod 755 "$dir"
+            else
+              echo " $dir doesn't exist yet - will be created by PV"
+            fi
+          done
+
+          # Also fix root directory
+          chown 1000:1000 /opencloud 2>/dev/null || true
+          chmod 755 /opencloud 2>/dev/null || true
+
+          echo " Permission setup complete!"
+          echo "Directory status:"
+          ls -la /opencloud/
+        volumeMounts:
+        - name: root-opencloud
+          mountPath: /opencloud
+      volumes:
+      - name: root-opencloud
+        hostPath:
+          path: /opencloud
+          type: DirectoryOrCreate
+

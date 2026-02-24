@@ -17,9 +17,10 @@ data:
         service: http://echo.default.svc.cluster.local:80
       - hostname: cnn.jtanprojects.com
         service: http://cnn-service.default.svc.cluster.local:8501
-      - hostname: opencloud.jtan.projects.com
-        service: http://opencloud.opencloud.svc.cluster.local:9200
-        originRequest: true 
+      - hostname: opencloud.jtanprojects.com
+        service: https://opencloud.opencloud.svc.cluster.local:9200
+        originRequest:
+          noTLSVerify: true
       - hostname: reload.jtanprojects.com
         service: http://example.default.svc.cluster.local:80
       - service: http_status:404

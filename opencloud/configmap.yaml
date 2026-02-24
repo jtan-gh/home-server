@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opencloud-config
+  namespace: opencloud
+data:
+  NODE_IP: "192.168.1.72"
+  # URLs and endpoints
+##  OC_URL: "https://192.168.1.72:9200"
+  OC_URL: "https://opencloud.jtanprojects.com"
+##  IDM_ISSUER_URL: "https://192.168.1.72:9200"
+  IDM_URL: "https://opencloud.jtanprojects.com"
+
+  # Server settings
+  PROXY_HTTPS_ADDR: "0.0.0.0:9200"
+  PROXY_TLS_CERT: "/certs/server.pem"
+  PROXY_TLS_KEY: "/certs/server.key"
+  PROXY_TLS_CA: "/certs/ca.pem"
+
+  # Feature flags
+  OC_INSECURE: "true"
+  PROXY_SKIP_VERIFY_TLS: "true"
+
+  # Admin user (username only - password goes in secret)
+  IDM_ADMIN_USERNAME: "admin"
