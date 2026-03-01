@@ -1,0 +1,16 @@
+services:
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    # network_mode: host       # important for WebRTC, HomeKit, UDP cameras
+    ports:
+      - "1984:1984" # Web UI & API
+      - "1935:1935" # RTMP
+      - "8554:8554" # RTSP
+      - "8555:8555/tcp" # WebRTC
+      - "8555:8555/udp" # WebRTC
+    privileged: true # only for FFmpeg hardware transcoding
+    restart: unless-stopped # autorestart on fail or config change from WebUI
+    environment:
+      - TZ=Canada/Pacific # timezone in logs
+    volumes:
+      - "./go2rtc:/config" # folder for go2rtc.yaml file (edit from WebUI)

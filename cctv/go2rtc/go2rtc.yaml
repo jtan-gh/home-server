@@ -1,0 +1,6 @@
+rtmp:
+  listen: "0.0.0.0:1935"
+streams:
+  test:
+    # This tells go2rtc to accept an incoming stream at /live/phone
+    - rtmp://0.0.0.0:1935/phone

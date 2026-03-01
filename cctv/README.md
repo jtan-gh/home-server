@@ -1,0 +1,2 @@
+# Personal CCTV
+This project is currently unfinised. So far was able to connect to rtmp://host:port/1935/live/phone with RTMP. Was also able to have go2rtc (NVR) connect to a phone that is streaming with RTSP. Currently waiting for raspberry pi zero to be delivered. Goal of project is to create own outdoor camera and stream it when connected to tailscale.
