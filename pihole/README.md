@@ -4,7 +4,11 @@ This project deploys [Pi‑hole](https://pi-hole.net/) (a network-wide ad blocke
 ## Prerequisites
 - A Kubernetes cluster (v1.19+ recommended)
 - `kubectl` configured to communicate with your cluster
+- If using k3s, disable default lb
+  - sudo nano /etc/systemd/system/k3s.service
+  - add --disable servicelb to the end of ExecStart=/usr/local/bin/k3s server
 - MetalLB already installed in the cluster (or included in your setup)
+  - kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
 - Basic understanding of Kubernetes concepts
 
 Project Structure
