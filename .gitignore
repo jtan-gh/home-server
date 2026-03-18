@@ -1,2 +1,3 @@
 **/secrets/*
 !**/secrets/secrets.example.yaml
+!**/secrets/secret.example.yaml

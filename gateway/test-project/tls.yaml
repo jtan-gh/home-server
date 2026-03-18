@@ -1,0 +1,49 @@
+# ============================================================
+# tls.yaml
+#
+# Certificate + BackendTLSPolicy for ex.jtanprojects.com.
+#
+# Why a separate Certificate here instead of reusing wildcard-tls:
+#   Kubernetes pod volume mounts can only reference Secrets in the
+#   same namespace. The wildcard-tls Secret lives in envoy-gateway-system,
+#   so nginx can't mount it directly. Issuing a cert in this namespace
+#   avoids cross-namespace secret syncing.
+#
+# The Gateway still presents the wildcard cert to the client.
+# This cert is only used for the gateway → nginx backend leg.
+# ============================================================
+
+---
+# Certificate for ex.jtanprojects.com in this namespace
+# so nginx can mount it directly
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ex-tls
+  namespace: ex-proj
+spec:
+  secretName: ex-tls
+  issuerRef:
+    name: letsencrypt-dns
+    kind: ClusterIssuer
+  commonName: ex.jtanprojects.com
+  dnsNames:
+    - ex.jtanprojects.com
+
+---
+# BackendTLSPolicy — tells Envoy to use TLS when connecting
+# to nginx-https-service and verify against Let's Encrypt public CA
+apiVersion: gateway.networking.k8s.io/v1alpha3
+kind: BackendTLSPolicy
+metadata:
+  name: ex-backend-tls
+  namespace: ex-proj
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: nginx-https-service
+  validation:
+    wellKnownCACertificates: System    # trusts Let's Encrypt automatically
+    hostname: ex.jtanprojects.com      # must match cert SAN above
+

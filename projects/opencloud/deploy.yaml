@@ -4,6 +4,7 @@ metadata:
   name: opencloud-certgen
   namespace: opencloud
 spec:
+  backoffLimit: 2
   template:
     spec:
       restartPolicy: Never
@@ -51,7 +52,7 @@ spec:
             echo "DNS.2 = localhost" >> /certs/server.cnf
             echo "DNS.3 = host.docker.internal" >> /certs/server.cnf
             echo "IP.1 = 127.0.0.1" >> /certs/server.cnf
-            echo "IP.2 = $NODE_IP" >> /certs/server.cnf
+            echo "IP.2 = 192.168.1.168" >> /certs/server.cnf
 
             openssl genrsa -out /certs/server.key 2048
             openssl req -new -key /certs/server.key -out /certs/server.csr -config /certs/server.cnf
@@ -75,6 +76,7 @@ metadata:
   name: opencloud-init
   namespace: opencloud
 spec:
+  backoffLimit: 2
   template:
     spec:
       restartPolicy: Never

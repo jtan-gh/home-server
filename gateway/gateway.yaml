@@ -1,0 +1,73 @@
+# ============================================================
+# gateway.yaml
+#
+# Wildcard certificate + GatewayClass + Gateway.
+#
+# The wildcard cert *.jtanprojects.com is owned by the gateway,
+# not by any individual service. Adding a new service requires
+# zero changes to this file.
+#
+# Apply:
+#   kubectl apply -f gateway/gateway.yaml
+#   kubectl wait certificate/wildcard-tls -n envoy-gateway-system \
+#     --for=condition=Ready --timeout=120s
+# ============================================================
+
+---
+# Wildcard certificate — covers all subdomains of jtanprojects.com
+# Lives in envoy-gateway-system so the Gateway can reference it directly.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-tls
+  namespace: envoy-gateway-system
+spec:
+  secretName: wildcard-tls
+  issuerRef:
+    name: letsencrypt-dns
+    kind: ClusterIssuer
+  commonName: "*.jtanprojects.com"
+  dnsNames:
+    - "*.jtanprojects.com"
+    - "jtanprojects.com"
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: eg
+  namespace: envoy-gateway-system
+spec:
+  gatewayClassName: eg
+  listeners:
+    # HTTPS listener — wildcard cert handles all subdomains
+    # No changes needed here when adding new services
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: "*.jtanprojects.com"     # matches any subdomain
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: wildcard-tls           # the wildcard cert above
+            namespace: envoy-gateway-system
+      allowedRoutes:
+        namespaces:
+          from: All
+
+    # HTTP listener — redirects everything to HTTPS
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: "*.jtanprojects.com"
+      allowedRoutes:
+        namespaces:
+          from: All

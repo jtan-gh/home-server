@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-dns
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: jtan.career@gmail.com
+    # ClusterIssuer will create a letsencrypt-dns-account-key secret to store the cert
+    privateKeySecretRef:
+      name: letsencrypt-dns-account-key
+    solvers:
+    # Challenge-dns01: cert authority uses credentials to access dns authority. Cert authority creates and validates a temp txt to prove ownership. cert authority then deletes temp txt. 
+    - dns01:
+        cloudflare:
+          apiTokenSecretRef:
+            name: cloudflare-api-token
+            key: api-token
