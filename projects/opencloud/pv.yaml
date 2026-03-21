@@ -32,23 +32,6 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: manual
 ---
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: opencloud-certs-pv
-  labels:
-    type: opencloud-certs
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  hostPath:
-    path: /opencloud/certs
-    type: DirectoryOrCreate
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: manual
----
 ##temproary. currently using hostpath which will have permission errors. eventually want to change to csi and nas
 apiVersion: batch/v1
 kind: Job
@@ -71,7 +54,7 @@ spec:
           echo "Setting up OpenCloud directories with correct permissions..."
 
           # Create directories with correct ownership
-          for dir in /opencloud/config /opencloud/data /opencloud/certs; do
+          for dir in /opencloud/config /opencloud/data; do
             if [ -d "$dir" ]; then
               echo "Fixing $dir"
               chown -R 1000:1000 "$dir"

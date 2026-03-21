@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: nginx-proxy
   namespace: opencloud
+  labels:
+    app: nginx-proxy
 spec:
   replicas: 1
   selector:
@@ -14,24 +16,45 @@ spec:
         app: nginx-proxy
     spec:
       containers:
-      - name: nginx
-        image: nginx:alpine
-        ports:
-        - containerPort: 80
-          hostPort: 80
-        - containerPort: 443
-          hostPort: 443
-        volumeMounts:
-        - name: nginx-conf
-          mountPath: /etc/nginx/nginx.conf
-          subPath: nginx.conf   # mount as a file, not a directory
-        - name: tls
-          mountPath: /etc/nginx/ssl
-          readOnly: true
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
       volumes:
-      - name: nginx-conf
-        configMap:
-          name: nginx-conf
-      - name: tls
-        secret:
-          secretName: opencloud-tls
+        - name: nginx-conf
+          configMap:
+            name: nginx-conf
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-proxy
+  namespace: opencloud
+spec:
+  selector:
+    app: nginx-proxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP

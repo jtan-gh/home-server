@@ -1,78 +1,6 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: opencloud-certgen
-  namespace: opencloud
-spec:
-  backoffLimit: 2
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-      - name: certgen
-        image: alpine/openssl
-        volumeMounts:
-        - name: certs
-          mountPath: /certs
-        command:
-        - /bin/sh
-        - -c
-        - |
-          set -e
-
-          echo "Current directory contents:"
-          ls -la /certs/ || true
-
-          # Generate CA if it doesn't exist
-          if [ ! -f /certs/ca.pem ]; then
-            echo "Creating CA..."
-            openssl genrsa -out /certs/ca.key 4096
-            openssl req -x509 -new -nodes -key /certs/ca.key -sha256 -days 3650 \
-              -out /certs/ca.pem -subj "/CN=OpenCloud-Local-CA"
-          fi
-
-          # Generate server certificate if it doesn't exist
-          if [ ! -f /certs/server.pem ]; then
-            echo "Creating server cert..."
-
-            # Create OpenSSL config file
-            echo "[ req ]" > /certs/server.cnf
-            echo "prompt = no" >> /certs/server.cnf
-            echo "distinguished_name = dn" >> /certs/server.cnf
-            echo "req_extensions = req_ext" >> /certs/server.cnf
-            echo "" >> /certs/server.cnf
-            echo "[ dn ]" >> /certs/server.cnf
-            echo "CN = opencloud" >> /certs/server.cnf
-            echo "" >> /certs/server.cnf
-            echo "[ req_ext ]" >> /certs/server.cnf
-            echo "subjectAltName = @alt_names" >> /certs/server.cnf
-            echo "" >> /certs/server.cnf
-            echo "[ alt_names ]" >> /certs/server.cnf
-            echo "DNS.1 = opencloud" >> /certs/server.cnf
-            echo "DNS.2 = localhost" >> /certs/server.cnf
-            echo "DNS.3 = host.docker.internal" >> /certs/server.cnf
-            echo "IP.1 = 127.0.0.1" >> /certs/server.cnf
-            echo "IP.2 = 192.168.1.168" >> /certs/server.cnf
-
-            openssl genrsa -out /certs/server.key 2048
-            openssl req -new -key /certs/server.key -out /certs/server.csr -config /certs/server.cnf
-            openssl x509 -req -in /certs/server.csr -CA /certs/ca.pem -CAkey /certs/ca.key \
-              -CAcreateserial -out /certs/server.pem -days 825 -sha256 \
-              -extensions req_ext -extfile /certs/server.cnf
-
-            echo "Certificate created successfully!"
-          fi
-
-          chmod 644 /certs/*.pem /certs/*.key 2>/dev/null || true
-          echo "Certificates ready!"
-      volumes:
-      - name: certs
-        persistentVolumeClaim:
-          claimName: opencloud-certs
----
-apiVersion: batch/v1
-kind: Job
-metadata:
   name: opencloud-init
   namespace: opencloud
 spec:
@@ -80,48 +8,46 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      initContainers:
-      - name: wait-for-certgen
-        image: busybox:latest
-        command:
-        - sh
-        - -c
-        - |
-          echo "Waiting for certificates..."
-          until [ -f /certs/server.pem ]; do
-            echo "Certificates not ready. Waiting..."
-            sleep 2
-          done
-          echo "Certificates found!"
-        volumeMounts:
-        - name: certs
-          mountPath: /certs
       containers:
-      - name: init
-        image: opencloudeu/opencloud-rolling:latest
-        command: ["opencloud", "init"]
-        envFrom:
-        - configMapRef:
-            name: opencloud-config
-        - secretRef:
-            name: opencloud-secret
-        volumeMounts:
-        - name: config
-          mountPath: /etc/opencloud
-        - name: data
-          mountPath: /var/lib/opencloud
-        - name: certs
-          mountPath: /certs
+        - name: init
+          image: opencloudeu/opencloud-rolling:latest
+          command:
+            - sh
+            - -c
+            - |
+              if [ -f /etc/opencloud/opencloud.yaml ]; then
+                echo "Already initialized, skipping."
+                exit 0
+              fi
+              opencloud init
+          envFrom:
+            - configMapRef:
+                name: opencloud-config
+            - secretRef:
+                name: opencloud-secret
+          volumeMounts:
+            - name: config
+              mountPath: /etc/opencloud
+            - name: data
+              mountPath: /var/lib/opencloud
+            - name: certs
+              mountPath: /certs
+              readOnly: true
       volumes:
-      - name: config
-        persistentVolumeClaim:
-          claimName: opencloud-config
-      - name: data
-        persistentVolumeClaim:
-          claimName: opencloud-data
-      - name: certs
-        persistentVolumeClaim:
-          claimName: opencloud-certs
+        - name: config
+          persistentVolumeClaim:
+            claimName: opencloud-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: opencloud-data
+        - name: certs
+          secret:
+            secretName: opencloud-tls
+            items:
+              - key: tls.crt
+                path: server.pem
+              - key: tls.key
+                path: server.key
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -141,83 +67,70 @@ spec:
         app: opencloud
     spec:
       initContainers:
-      - name: wait-for-certs
-        image: busybox:latest
-        command:
-        - sh
-        - -c
-        - |
-          echo "Waiting for certificates..."
-          until [ -f /certs/server.pem ]; do
-            sleep 2
-          done
-        volumeMounts:
-        - name: certs
-          mountPath: /certs
-
-      - name: wait-for-init
-        image: busybox:latest
-        command:
-        - sh
-        - -c
-        - |
-          echo "Waiting for initialization..."
-          until [ -f /etc/opencloud/opencloud.yaml ]; do
-            sleep 2
-          done
-        volumeMounts:
-        - name: config
-          mountPath: /etc/opencloud
-
+        - name: wait-for-init
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for initialization..."
+              until [ -f /etc/opencloud/opencloud.yaml ]; do
+                sleep 2
+              done
+              echo "Config found, starting server..."
+          volumeMounts:
+            - name: config
+              mountPath: /etc/opencloud
       containers:
-      - name: opencloud
-        image: opencloudeu/opencloud-rolling:latest
-        command: ["opencloud", "server"]
-        ports:
-        - containerPort: 9200
-          name: https
-
-        envFrom:
-        - configMapRef:
-            name: opencloud-config
-        - secretRef:
-            name: opencloud-secret
-
-        volumeMounts:
-        - name: config
-          mountPath: /etc/opencloud
-        - name: data
-          mountPath: /var/lib/opencloud
-        - name: certs
-          mountPath: /certs
-          readOnly: true
-
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 9200
-            scheme: HTTPS
-          initialDelaySeconds: 30
-          periodSeconds: 10
-
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 9200
-            scheme: HTTPS
-          initialDelaySeconds: 15
-          periodSeconds: 5
-
+        - name: opencloud
+          image: opencloudeu/opencloud-rolling:latest
+          command: ["opencloud", "server"]
+          ports:
+            - containerPort: 9200
+              name: https
+          envFrom:
+            - configMapRef:
+                name: opencloud-config
+            - secretRef:
+                name: opencloud-secret
+          volumeMounts:
+            - name: config
+              mountPath: /etc/opencloud
+            - name: data
+              mountPath: /var/lib/opencloud
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9200
+              scheme: HTTPS
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9200
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 5
       volumes:
-      - name: config
-        persistentVolumeClaim:
-          claimName: opencloud-config
-      - name: data
-        persistentVolumeClaim:
-          claimName: opencloud-data
-      - name: certs
-        persistentVolumeClaim:
-          claimName: opencloud-certs
+        - name: config
+          persistentVolumeClaim:
+            claimName: opencloud-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: opencloud-data
+        - name: certs
+          secret:
+            secretName: opencloud-tls
+            items:
+              - key: tls.crt
+                path: server.pem    # opencloud expects /certs/server.pem
+              - key: tls.key
+                path: server.key    # opencloud expects /certs/server.key
+
 ---
 apiVersion: v1
 kind: Service
@@ -228,7 +141,11 @@ spec:
   selector:
     app: opencloud
   ports:
-    - port: 9200
+    - name: https
+      port: 443          # internal calls hit 443
+      targetPort: 9200   # pod is on 9200
+    - name: https-node
+      port: 9200
       targetPort: 9200
-      nodePort: 32000
+      nodePort: 32000    # Cloudflare tunnel still hits 32000
   type: NodePort
