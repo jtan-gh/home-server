@@ -37,3 +37,4 @@ spec:
         - name: cloudflared-config
           configMap:
             name: cloudflared-config
+

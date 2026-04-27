@@ -1,51 +1,36 @@
 #!/bin/bash
-
 set -e
 
-TUNNEL_ID="06e1e9ae-33f4-45ae-a9b6-9826f897f2a9"
-HOSTNAME="jtanprojects.com"
+# ===== CONFIGURE THESE =====
+TUNNEL_UUID="06e1e9ae-33f4-45ae-a9b6-9826f897f2a9"   # your actual tunnel UUID
+NAMESPACE="cloudflared"
+# ===========================
 
-TUNNEL_JSON_PATH="$HOME/.cloudflared/${TUNNEL_ID}.json"
-TUNNEL_JSON_PATH2="$HOME/.cloudflared/tunnel.json"
+CRED_FILE="$HOME/.cloudflared/${TUNNEL_UUID}.json"
 
-CONFIG_MAP_FILE="./cloudflare/configmap.yaml"
-SECRET_FILE="./cloudflare/secrets/secrets.yaml"
-DEPLOYMENT_FILE="./cloudflare/deployment.yaml"
-DEBUG_POD_FILE="./cloudflare/debug-pod.yaml"
+if [ ! -f "$CRED_FILE" ]; then
+    echo "ERROR: Credentials file not found at $CRED_FILE"
+    exit 1
+fi
 
-echo "Creating namespace 'cloudflared' if not exists..."
-sudo kubectl get ns cloudflared >/dev/null 2>&1 || sudo kubectl create ns cloudflared
+# Create namespace (ignore if exists)
+kubectl create ns "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-echo "Creating and Encoding tunnel.json..."
-ENCODED_TUNNEL_JSON=$(base64 "$TUNNEL_JSON_PATH" | tr -d '\n')
-cat $TUNNEL_JSON_PATH > $TUNNEL_JSON_PATH2
+# Create/update secret from the credentials file
+kubectl create secret generic cloudflared-auth \
+    --namespace "$NAMESPACE" \
+    --from-file=tunnel.json="$CRED_FILE" \
+    --dry-run=client -o yaml | kubectl apply -f -
 
-echo "Generating cloudflared-auth secret manifest..."
+# Apply ConfigMap (assuming tunnel UUID is already inside it)
+kubectl apply -f ./cloudflare/configmap.yaml
 
-cat > "$SECRET_FILE" <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: cloudflared-auth
-  namespace: cloudflared
-type: Opaque
-data:
-  tunnel.json: $ENCODED_TUNNEL_JSON
-EOF
+# Apply Deployment
+kubectl apply -f ./cloudflare/deployment.yaml
 
-echo "Applying Secret..."
-sudo kubectl apply -f "$SECRET_FILE"
+# Optional debug pod
+if [ -f debug-pod.yaml ]; then
+    kubectl apply -f ./cloudflare/debug-pod.yaml
+fi
 
-echo "Replacing tunnelID inside cloudflared ConfigMap..."
-sed -i "s/^[[:space:]]*tunnel: .*/    tunnel: $TUNNEL_ID/" "$CONFIG_MAP_FILE"
-
-echo "Applying ConfigMap..."
-sudo kubectl apply -f "$CONFIG_MAP_FILE"
-
-echo "Applying Deployment..."
-sudo kubectl apply -f "$DEPLOYMENT_FILE"
-
-echo "Creating debug pod! You can optionally run:"
-sudo kubectl apply -f $DEBUG_POD_FILE
-echo "To connect to debug pod with sh use..."
-echo "kubectl exec -n cloudflared -it debug-config-check -- sh"
+echo "[+] Done. Check logs: kubectl logs -n $NAMESPACE deployment/cloudflared-tunnel"
