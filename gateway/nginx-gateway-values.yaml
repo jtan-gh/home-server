@@ -1,0 +1,15 @@
+nginx:
+  service:
+    ports:
+      - port: 80
+        targetPort: 80
+        protocol: TCP
+        name: http
+      - port: 443
+        targetPort: 443
+        protocol: TCP
+        name: https
+      - port: 8443
+        targetPort: 8443
+        protocol: TCP
+        name: passthrough

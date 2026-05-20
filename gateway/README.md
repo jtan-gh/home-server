@@ -1,380 +1,194 @@
-# TLS Re-encryption with Envoy Gateway
-### client → HTTPS → gateway → HTTPS → nginx-service
+# Gateway — NGINX Gateway Fabric (NGF)
 
-## Architecture
-
-```
-Client (browser / curl)
-  │
-  │  HTTPS — api.jtanprojects.com
-  │  cert:  api-public-tls (Let's Encrypt)
-  ▼
-Envoy Gateway
-  │
-  │  CoreDNS rewrites echo.internal.jtanprojects.com
-  │                 → echo-service.echo.svc.cluster.local
-  │
-  │  HTTPS — echo.internal.jtanprojects.com
-  │  cert:  internal-wildcard-tls (Let's Encrypt, *.internal.jtanprojects.com)
-  ▼
-nginx Service (echo namespace)
-```
+This directory contains configuration for NGINX Gateway Fabric (NGF). This is an alternative entry point to cloudflared. Very useful for split-dns or local traffic management
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `cert-manager/` | ClusterIssuer using Let's Encrypt DNS challenge via Cloudflare |
-| `secrets.yaml` | Cloudflare API token Secret used by cert-manager |
-| `gateway/` | Envoy Gateway install + GatewayClass + Gateway resource |
-| `internal-tls/` | Certificate resources + BackendTLSPolicy for each internal service |
-| `nginx-https-deployment/` | nginx Deployment + Service serving HTTPS on 8443 |
-| `configmap.yaml` | CoreDNS rewrite rule — routes internal domain to cluster service |
+- `gateway.yaml` — Gateway resource defining HTTP, HTTPS, and TLS passthrough listeners
+- `nginx-gateway-values.yaml` — Helm values for NGF installation
 
 ---
 
-## Prerequisites
+## Installation
 
-- Kubernetes cluster (tested on kubeadm)
-- `kubectl` and `helm` installed
-- Cloudflare API token with DNS edit permissions for `jtanprojects.com`
-
----
-
-## Creating the Cloudflare API Token
-
-You'll do this once. The token allows cert-manager to create and delete DNS TXT records
-on your behalf to complete the Let's Encrypt DNS-01 challenge.
-
-### 1. Log in to Cloudflare
-Go to [dash.cloudflare.com](https://dash.cloudflare.com) and sign in.
-
-### 2. Open API Tokens
-Click your **profile icon** in the top-right corner → **My Profile** → select
-**API Tokens** from the left sidebar.
-
-### 3. Create a new token
-Click **Create Token** → then click **Create Custom Token** at the bottom
-(do not use a template).
-
-### 4. Configure the token
-
-**Token name:** something memorable like `cert-manager-letsencrypt`
-
-**Permissions** — add these two rows exactly:
-
-| Category | Subcategory | Access |
-|----------|-------------|--------|
-| Zone | Zone | Read |
-| Zone | DNS | Edit |
-
-To add each row: click **+ Add more** and select from the dropdowns.
-
-**Zone Resources:**
-
-Set to:
-```
-Include → All zones
-```
-
-This is required because cert-manager queries Cloudflare to look up which zone
-owns the domain before it can create the TXT record. Scoping to a specific zone
-can cause a `requires permission to list zones` error.
-
-**IP Address Filtering:** leave empty (optional, but you could lock it to your
-server's IP for extra security).
-
-**TTL:** leave as no expiry, or set a long expiry (1 year+). If the token expires,
-cert-manager will silently fail to renew certificates.
-
-### 5. Create and copy the token
-Click **Continue to Summary** → review the permissions → click **Create Token**.
-
-**Copy the token immediately** — Cloudflare only shows it once.
-
-### 6. Verify the token works
+### Why OCI and not nginx-stable
+ 
+NGINX publishes two completely separate products under similar names:
+ 
+| Product | Helm source | Based on |
+|---------|------------|----------|
+| **NGINX Ingress Controller** | `nginx-stable` Helm repo | older `Ingress` API |
+| **NGINX Gateway Fabric** | OCI registry (`ghcr.io`) | modern Gateway API |
+ 
+These are not the same thing and are not interchangeable. NGF is the newer implementation built around the Kubernetes Gateway API (`HTTPRoute`, `TLSRoute`, `GatewayClass`, etc.). The `nginx-stable` Helm repo only contains NGINX Ingress Controller charts — NGF is not in it.
+ 
+If you try to upgrade NGF using `nginx-stable/nginx-gateway-fabric`, Helm will throw `repo nginx-stable not found` because the install never came from there.
+ 
+### Install
+ 
 ```bash
-curl -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-  -H "Authorization: Bearer <YOUR_TOKEN>" \
-  -H "Content-Type: application/json"
+helm install ngf oci://ghcr.io/nginx/charts/nginx-gateway-fabric \
+  --namespace nginx-gateway \
+  --values nginx-gateway-values.yaml
+```
+ 
+### Upgrade
+ 
+Always use the same OCI source as the install:
+ 
+```bash
+helm upgrade ngf oci://ghcr.io/nginx/charts/nginx-gateway-fabric \
+  --namespace nginx-gateway \
+  --values nginx-gateway-values.yaml
+```
+ 
+---
 
-# Expected response:
-# {"result":{"status":"active"},"success":true,...}
+## Architecture
+
+NGF runs as two components:
+
+- **Control plane** (`ngf-nginx-gateway-fabric`) in the `nginx-gateway` namespace — manages configuration
+- **Data plane** (`nginx-gateway-nginx`) in `gateway-system` — handles actual traffic
+
+The data plane Service (`nginx-gateway-nginx`) is a LoadBalancer assigned `192.168.1.11` by MetalLB. This is the IP all traffic flows through.
+
+```
+LAN device → 192.168.1.11 (MetalLB) → nginx-gateway-nginx pod → backend service
 ```
 
-### 7. Store the token in secrets.yaml
-The token is stored as a Kubernetes Secret in the `cert-manager` namespace:
+---
+
+## Listeners
+
+For this gateway we have three listeners:
+
+| Name | Port | Protocol | Purpose |
+|------|------|----------|---------|
+| `http` | 80 | HTTP | Redirects to HTTPS |
+| `https` | 443 | HTTPS | TLS termination using wildcard cert |
+| `passthrough` | 8443 | TLS | TLS passthrough for apps managing their own certs |
+
+The wildcard cert (`wildcard-tls` in `gateway-system`) is managed by cert-manager and covers `*.jtanprojects.com`.
+
+---
+
+## Routing
+
+Apps attach to the gateway via `HTTPRoute` (for HTTPS termination) or `TLSRoute` (for passthrough):
+view /test folder for examples
+
+### Cross-namespace routing
+
+When an `HTTPRoute` is in a different namespace than the Gateway, a `ReferenceGrant` is required in the app's namespace:
 
 ```yaml
-apiVersion: v1
-kind: Secret
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
 metadata:
-  name: cloudflare-api-token
-  namespace: cert-manager
-type: Opaque
-stringData:
-  api-token: <YOUR_TOKEN_HERE>   # paste the token from step 5
-```
-
-> **Never commit secrets.yaml to git.** Add it to `.gitignore`.
-> If you use a GitOps tool like Flux or ArgoCD, use Sealed Secrets or
-> an external secrets manager instead.
-
----
-
-## Setup
-
-### 1. Install cert-manager
-
-```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
-kubectl rollout status deployment -n cert-manager --timeout=120s
-```
-
-Apply the Cloudflare API token and ClusterIssuer:
-
-```bash
-# Token is stored in secrets.yaml — apply before the ClusterIssuer
-kubectl apply -f secrets.yaml
-kubectl apply -f cert-manager/
-```
-
-Verify the issuer is ready:
-
-```bash
-kubectl get clusterissuer letsencrypt-dns
-# READY should be True
-```
-
-### 2. Install Envoy Gateway
-
-> **Important:** do not install Gateway API CRDs separately. Always use the CRDs
-> bundled with Envoy Gateway to avoid version mismatches that break BackendTLSPolicy.
-
-```bash
-# Install Gateway API CRDs bundled with Envoy Gateway
-helm template eg oci://docker.io/envoyproxy/gateway-crds-helm \
-  --version v1.6.1 \
-  --set crds.gatewayAPI.enabled=true \
-  --set crds.envoyGateway.enabled=true \
-  | kubectl apply --server-side -f -
-
-# Install Envoy Gateway
-helm install eg oci://docker.io/envoyproxy/gateway-helm \
-  --version v1.6.1 \
-  -n envoy-gateway-system \
-  --create-namespace
-
-kubectl rollout status deployment/envoy-gateway \
-  -n envoy-gateway-system --timeout=90s
-```
-
-Verify BackendTLSPolicy is being watched (not skipped):
-
-```bash
-kubectl logs -n envoy-gateway-system deployment/envoy-gateway --tail=50 \
-  | grep -i backendtls
-# Should show: Starting EventSource ... BackendTLSPolicy
-```
-
-Apply the Gateway resources:
-
-```bash
-kubectl apply -f gateway/
-```
-
-### 3. Apply CoreDNS rewrite
-
-This rewrite is required so Envoy can resolve `echo.internal.jtanprojects.com`
-to the internal service IP rather than attempting an external DNS lookup.
-See [Why CoreDNS rewrite is needed](#why-coredns-rewrite-is-needed) for details.
-
-```bash
-kubectl apply -f configmap.yaml
-kubectl rollout restart deployment/coredns -n kube-system
-kubectl rollout status deployment/coredns -n kube-system --timeout=60s
-```
-
-Verify the rewrite works from inside the cluster:
-
-```bash
-kubectl run dns-test --rm -it --image=busybox -- \
-  nslookup echo.internal.jtanprojects.com
-# Should resolve to the ClusterIP of echo-service.echo.svc.cluster.local
-```
-
-### 4. Deploy nginx
-
-```bash
-kubectl apply -f nginx-https-deployment/
-kubectl rollout status deployment -n echo --timeout=60s
-```
-
-### 5. Apply internal-tls
-
-`internal-tls/` contains both the `Certificate` resources and the `BackendTLSPolicy`.
-They are kept together because the policy depends directly on the cert — if you need
-to add another service, duplicate this pattern (see [Adding a new service](#adding-a-new-service)).
-
-```bash
-kubectl apply -f internal-tls/
-```
-
-Wait for certificates to be issued (DNS challenge typically takes 1-2 minutes):
-
-```bash
-kubectl get certificate -n echo -w
-# Both api-public-tls and internal-wildcard-tls should reach READY = True
-```
-
-Verify the BackendTLSPolicy is accepted:
-
-```bash
-kubectl describe backendtlspolicy echo-backend-tls -n echo
-# Look for: Accepted: True
-```
-
----
-
-## Verification
-
-The test below bypasses DNS and connects directly to the NodePort, so you can verify
-the full TLS stack without opening firewall port 443 or configuring external DNS.
-`--resolve` overrides DNS locally, and `-k` skips cert trust (Let's Encrypt is valid,
-but this avoids needing the CA on your test machine).
-
-```bash
-# Replace 32309 with your actual NodePort and 192.168.1.78 with your node IP
-curl -k --resolve api.jtanprojects.com:32309:192.168.1.78 \
-  https://api.jtanprojects.com:32309
-```
-
-To also verify the backend TLS leg (not just the frontend), add `-v` and look for
-two distinct TLS handshakes — one for the client connection and one in the Envoy logs:
-
-```bash
-# Verbose output — confirms frontend cert is api.jtanprojects.com
-curl -kv --resolve api.jtanprojects.com:32309:192.168.1.78 \
-  https://api.jtanprojects.com:32309 2>&1 | grep -E "subject|issuer|SSL|HTTP"
-
-# Confirm Envoy is making a TLS connection to the backend (not plain HTTP)
-kubectl logs -n envoy-gateway-system \
-  $(kubectl get pod -n envoy-gateway-system \
-    -l gateway.envoyproxy.io/owning-gateway-name=eg \
-    -o jsonpath='{.items[0].metadata.name}') \
-  | grep -i "tls\|ssl" | tail -20
-```
-
----
-
-## Adding a new service
-
-Because the wildcard cert `*.internal.jtanprojects.com` covers all subdomains,
-new services **do not need a new Certificate**. The same `internal-wildcard-tls`
-secret can be reused.
-
-For each new service you need:
-
-**1. CoreDNS rewrite** — add a new `rewrite` line to `configmap.yaml`:
-```yaml
-rewrite name myservice.internal.jtanprojects.com myservice-svc.mynamespace.svc.cluster.local
-```
-Then restart CoreDNS:
-```bash
-kubectl apply -f configmap.yaml
-kubectl rollout restart deployment/coredns -n kube-system
-```
-
-**2. BackendTLSPolicy** — create a new file (e.g. `internal-tls/myservice-tls.yaml`):
-```yaml
-apiVersion: gateway.networking.k8s.io/v1alpha3
-kind: BackendTLSPolicy
-metadata:
-  name: myservice-backend-tls
-  namespace: mynamespace
+  name: allow-gateway
+  namespace: my-namespace   ##namespace the app is in
 spec:
-  targetRefs:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: gateway-system
+  to:
     - group: ""
       kind: Service
-      name: myservice-svc
-  validation:
-    caCertificateRefs:
-      - group: ""
-        kind: Secret
-        name: internal-wildcard-tls   # reuse the existing wildcard cert
-        namespace: echo               # namespace where the Secret lives
-    hostname: myservice.internal.jtanprojects.com
 ```
 
-**3. HTTPRoute** — add a route rule in `gateway/` pointing to your new service.
-
-That's it — no new Certificate or ClusterIssuer needed.
+Without this, NGF silently fails to resolve the backend even if the route shows `Accepted: True`.
 
 ---
 
-## Troubleshooting
+## TLS Passthrough (port 8443)
 
-### 502 Bad Gateway
+For apps that manage their own TLS certificates, use a `TLSRoute` against the `passthrough` listener. NGF reads the SNI from the ClientHello without decrypting and forwards raw TCP to the backend.
 
-The backend TLS handshake is failing. Check:
-
-```bash
-# 1. Confirm BackendTLSPolicy is accepted
-kubectl describe backendtlspolicy echo-backend-tls -n echo
-
-# 2. Confirm the wildcard cert covers echo.internal.jtanprojects.com
-kubectl get secret internal-wildcard-tls -n echo \
-  -o jsonpath='{.data.tls\.crt}' | base64 -d | \
-  openssl x509 -noout -text | grep -A2 "Subject Alternative"
-
-# 3. Confirm CoreDNS rewrite is resolving correctly
-kubectl run dns-test --rm -it --image=busybox -- \
-  nslookup echo.internal.jtanprojects.com
-```
-
-### Certificate stuck in Pending
-
-The DNS-01 challenge is not completing:
+The `TLSRoute` CRD is part of the Gateway API experimental channel. Install it separately:
 
 ```bash
-kubectl describe certificaterequest -n echo
-kubectl describe challenge -n echo
-# Look for Cloudflare API errors or DNS propagation delays
-```
+# Remove the safe-upgrades policy first (blocks experimental CRDs on top of standard)
+kubectl delete validatingadmissionpolicy safe-upgrades.gateway.networking.k8s.io
+kubectl delete validatingadmissionpolicybinding safe-upgrades.gateway.networking.k8s.io
 
-### BackendTLSPolicy not accepted
-
-Envoy Gateway may have started before the CRD was installed. Restart it:
-
-```bash
-kubectl rollout restart deployment/envoy-gateway -n envoy-gateway-system
-kubectl apply -f internal-tls/
-kubectl describe backendtlspolicy echo-backend-tls -n echo
-```
-
-### CoreDNS rewrite not taking effect
-
-```bash
-kubectl get configmap coredns -n kube-system -o yaml | grep rewrite
-kubectl rollout restart deployment/coredns -n kube-system
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/experimental-install.yaml
 ```
 
 ---
 
-## Why CoreDNS rewrite is needed
+## Known Issues & Fixes
 
-`BackendTLSPolicy` requires a `hostname` that matches the SAN on the backend cert.
-The backend cert is a wildcard `*.internal.jtanprojects.com`, so the hostname must be
-something like `echo.internal.jtanprojects.com`.
+### Port 8443 not appearing in Service
 
-When Envoy opens a connection to the backend, it resolves this hostname via cluster DNS.
-Without the rewrite, `echo.internal.jtanprojects.com` has no internal DNS record and the
-lookup either fails or routes externally to the public internet.
+**Symptom:** `kubectl get svc -n gateway-system` only shows ports 80 and 443, not 8443.
 
-The CoreDNS rewrite transparently maps:
-```
-echo.internal.jtanprojects.com → echo-service.echo.svc.cluster.local
+**Cause:** NGF dynamically adds Service ports based on Gateway listeners. The Service is in `gateway-system`, not `nginx-gateway`. Always check the right namespace:
+
+```bash
+kubectl get svc -n gateway-system
 ```
 
-Envoy resolves to the correct ClusterIP, while still sending
-`echo.internal.jtanprojects.com` as the TLS SNI — which matches the wildcard cert.
+**Fix:** Add the listener to the Gateway resource. NGF automatically syncs the Service ports.
+
+---
+
+### Pod-to-pod communication failing (Host is unreachable)
+
+**Symptom:** nginx pod gets `connect() failed (113: Host is unreachable)` when trying to reach backend pods by IP. ClusterIP works but pod IPs don't.
+
+**Root cause:** firewalld was blocking traffic in the kernel's `FORWARD` chain. When pods communicate across the `cni0` bridge, Linux treats it as forwarded traffic — the same chain that governs traffic between network interfaces on a router. firewalld's default policy rejects anything not explicitly trusted.
+
+**Why ClusterIP worked:** kube-proxy DNAT for ClusterIP takes a different path through the kernel's NAT stack that firewalld's rules permitted. Direct pod IP connections hit the FORWARD chain and were rejected.
+
+**Fix:** Add the pod and service CIDRs to firewalld's trusted zone:
+
+```bash
+sudo firewall-cmd --zone=trusted --add-source=10.42.0.0/16 --permanent
+sudo firewall-cmd --zone=trusted --add-source=10.43.0.0/16 --permanent
+sudo firewall-cmd --zone=trusted --add-interface=cni0 --permanent
+sudo firewall-cmd --reload
+```
+
+---
+
+### External LAN traffic can't reach NGF on port 443
+
+**Symptom:** Devices on the LAN can reach port 80 (get nginx 404) but HTTPS connections to `192.168.1.11` fail. `Test-NetConnection -Port 443` succeeds (TCP connects) but the browser gets "secure connection failed".
+
+**Root cause:** MetalLB Layer 2 mode makes the host respond to ARP for `192.168.1.11`. Packets arrive on the LAN interface (`wlo1`) in the `public` firewalld zone. Without masquerade enabled, response packets from pods go back with source IP `10.42.x.x` which LAN clients have no route to.
+
+**Fix:**
+
+```bash
+sudo firewall-cmd --zone=public --add-masquerade --permanent
+sudo firewall-cmd --zone=public --add-forward --permanent
+sudo firewall-cmd --zone=public --add-port=80/tcp --permanent
+sudo firewall-cmd --zone=public --add-port=443/tcp --permanent
+sudo firewall-cmd --reload
+```
+
+---
+
+## Debugging Commands
+
+```bash
+# Check Gateway listener status
+kubectl describe gateway nginx-gateway -n gateway-system
+
+# Check data plane Service ports
+kubectl get svc -n gateway-system
+
+# Check nginx generated config (stream block, upstreams, etc.)
+kubectl exec -n gateway-system <nginx-pod> -- nginx -T 2>/dev/null
+
+# Check nginx error logs
+kubectl logs -n gateway-system <nginx-pod>
+
+# Check NGF controller logs
+kubectl logs -n nginx-gateway -l app.kubernetes.io/name=nginx-gateway-fabric
+
+# Check HTTPRoute status
+kubectl describe httproute <name> -n <namespace>
+```

@@ -6,26 +6,36 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 1Gi
-  storageClassName: manual
-  selector:
-    matchLabels:
-      type: opencloud-config
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: opencloud-tank-pv
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: tank
+  hostPath:
+    path: /tank
+    type: Directory
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: opencloud-data
+  name: opencloud-tank
   namespace: opencloud
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: tank
   resources:
     requests:
-      storage: 256Gi
-  storageClassName: manual
-  selector:
-    matchLabels:
-      type: opencloud-data
+      storage: 500Gi
+  volumeName: opencloud-tank-pv

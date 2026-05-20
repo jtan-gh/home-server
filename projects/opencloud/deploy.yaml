@@ -1,54 +1,3 @@
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: opencloud-init
-  namespace: opencloud
-spec:
-  backoffLimit: 2
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: init
-          image: opencloudeu/opencloud-rolling:latest
-          command:
-            - sh
-            - -c
-            - |
-              if [ -f /etc/opencloud/opencloud.yaml ]; then
-                echo "Already initialized, skipping."
-                exit 0
-              fi
-              opencloud init
-          envFrom:
-            - configMapRef:
-                name: opencloud-config
-            - secretRef:
-                name: opencloud-secret
-          volumeMounts:
-            - name: config
-              mountPath: /etc/opencloud
-            - name: data
-              mountPath: /var/lib/opencloud
-            - name: certs
-              mountPath: /certs
-              readOnly: true
-      volumes:
-        - name: config
-          persistentVolumeClaim:
-            claimName: opencloud-config
-        - name: data
-          persistentVolumeClaim:
-            claimName: opencloud-data
-        - name: certs
-          secret:
-            secretName: opencloud-tls
-            items:
-              - key: tls.crt
-                path: server.pem
-              - key: tls.key
-                path: server.key
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -66,28 +15,19 @@ spec:
       labels:
         app: opencloud
     spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000       # kubelet chowns all volume mounts to this GID on attach
       initContainers:
-        - name: wait-for-init
-          image: busybox:latest
+        - name: init
+          image: opencloudeu/opencloud-rolling:latest
           command:
             - sh
             - -c
             - |
-              echo "Waiting for initialization..."
-              until [ -f /etc/opencloud/opencloud.yaml ]; do
-                sleep 2
-              done
-              echo "Config found, starting server..."
-          volumeMounts:
-            - name: config
-              mountPath: /etc/opencloud
-      containers:
-        - name: opencloud
-          image: opencloudeu/opencloud-rolling:latest
-          command: ["opencloud", "server"]
-          ports:
-            - containerPort: 9200
-              name: https
+              [ -f /etc/opencloud/opencloud.yaml ] && exit 0
+              opencloud init
           envFrom:
             - configMapRef:
                 name: opencloud-config
@@ -96,41 +36,53 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/opencloud
-            - name: data
+            - name: tank
               mountPath: /var/lib/opencloud
-            - name: certs
-              mountPath: /certs
-              readOnly: true
+      containers:
+        - name: opencloud
+          image: opencloudeu/opencloud-rolling:latest
+          command: ["opencloud", "server"]
+          ports:
+            - containerPort: 9200
+              name: http
+          envFrom:
+            - configMapRef:
+                name: opencloud-config
+            - secretRef:
+                name: opencloud-secret
+          env:
+            - name: PROXY_TLS
+              value: "false"
+            - name: OC_INSECURE
+              value: "true"
+            - name: PROXY_HTTP_ADDR
+              value: "0.0.0.0:9200"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/opencloud
+            - name: tank
+              mountPath: /var/lib/opencloud
           livenessProbe:
             httpGet:
               path: /health
               port: 9200
-              scheme: HTTPS
+              scheme: HTTP
             initialDelaySeconds: 30
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health
               port: 9200
-              scheme: HTTPS
+              scheme: HTTP
             initialDelaySeconds: 15
             periodSeconds: 5
       volumes:
         - name: config
           persistentVolumeClaim:
             claimName: opencloud-config
-        - name: data
+        - name: tank
           persistentVolumeClaim:
-            claimName: opencloud-data
-        - name: certs
-          secret:
-            secretName: opencloud-tls
-            items:
-              - key: tls.crt
-                path: server.pem    # opencloud expects /certs/server.pem
-              - key: tls.key
-                path: server.key    # opencloud expects /certs/server.key
-
+            claimName: opencloud-tank
 ---
 apiVersion: v1
 kind: Service
@@ -140,12 +92,25 @@ metadata:
 spec:
   selector:
     app: opencloud
+  type: ClusterIP
   ports:
-    - name: https
-      port: 443          # internal calls hit 443
-      targetPort: 9200   # pod is on 9200
-    - name: https-node
+    - name: http
       port: 9200
       targetPort: 9200
-      nodePort: 32000    # Cloudflare tunnel still hits 32000
-  type: NodePort
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: opencloud
+  namespace: opencloud
+spec:
+  parentRefs:
+    - name: nginx-gateway
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - opencloud.jtanprojects.com
+  rules:
+    - backendRefs:
+        - name: opencloud
+          port: 9200

@@ -1,26 +1,19 @@
 # ============================================================
-# gateway.yaml
+# Gateway Configuration for NGINX Gateway Fabric
+# 
+# This Gateway supports three types of listeners:
+#   1. HTTPS (Terminate) - For standard web apps (HTTP backends)
+#   2. HTTP (Redirect) - Redirects to HTTPS
+#   3. TLS Passthrough - For apps that manage their own certificates
 #
-# Wildcard certificate + GatewayClass + Gateway.
-#
-# The wildcard cert *.jtanprojects.com is owned by the gateway,
-# not by any individual service. Adding a new service requires
-# zero changes to this file.
-#
-# Apply:
-#   kubectl apply -f gateway/gateway.yaml
-#   kubectl wait certificate/wildcard-tls -n envoy-gateway-system \
-#     --for=condition=Ready --timeout=120s
+# Re-encryption (BackendTLSPolicy) is configured per-route separately
 # ============================================================
-
----
-# Wildcard certificate — covers all subdomains of jtanprojects.com
-# Lives in envoy-gateway-system so the Gateway can reference it directly.
+# Wildcard certificate - covers all subdomains
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: wildcard-tls
-  namespace: envoy-gateway-system
+  namespace: gateway-system
 spec:
   secretName: wildcard-tls
   issuerRef:
@@ -32,38 +25,51 @@ spec:
     - "jtanprojects.com"
 
 ---
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: eg
-spec:
-  controllerName: gateway.envoyproxy.io/gatewayclass-controller
-
----
+# Gateway with multiple listeners
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  name: eg
-  namespace: envoy-gateway-system
+  name: nginx-gateway
+  namespace: gateway-system
 spec:
-  gatewayClassName: eg
+  gatewayClassName: nginx
   listeners:
-    # HTTPS listener — wildcard cert handles all subdomains
-    # No changes needed here when adding new services
+    # ==========================================
+    # Listener 1: Standard HTTPS (Termination)
+    # For apps that expect HTTP internally
+    # ==========================================
     - name: https
       port: 443
       protocol: HTTPS
-      hostname: "*.jtanprojects.com"     # matches any subdomain
+      hostname: "*.jtanprojects.com"
       tls:
         mode: Terminate
         certificateRefs:
-          - name: wildcard-tls           # the wildcard cert above
-            namespace: envoy-gateway-system
+          - name: wildcard-tls
+            namespace: gateway-system
       allowedRoutes:
         namespaces:
           from: All
 
-    # HTTP listener — redirects everything to HTTPS
+    # ==========================================
+    # Listener 2: TLS Passthrough
+    # For apps that manage their own certificates
+    # Uses TLSRoute instead of HTTPRoute
+    # ==========================================
+    - name: passthrough
+      port: 8443                    # Using different port to avoid conflict
+      protocol: TLS
+      hostname: "*.jtanprojects.com"
+      tls:
+        mode: Passthrough           # No certificate needed
+      allowedRoutes:
+        namespaces:
+          from: All
+
+    # ==========================================
+    # Listener 3: HTTP Redirect
+    # Redirects all HTTP traffic to HTTPS
+    # ==========================================
     - name: http
       port: 80
       protocol: HTTP

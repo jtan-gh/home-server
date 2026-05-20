@@ -1,0 +1,93 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: passthrough-test-tls
+  namespace: gateway-system
+spec:
+  secretName: passthrough-test-tls
+  issuerRef:
+    name: letsencrypt-dns
+    kind: ClusterIssuer
+  commonName: "passthrough.jtanprojects.com"
+  dnsNames:
+    - "passthrough.jtanprojects.com"
+---
+# HTTPS app using the certificate
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: https-echo
+  namespace: gateway-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: https-echo
+  template:
+    metadata:
+      labels:
+        app: https-echo
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        volumeMounts:
+        - name: tls
+          mountPath: /etc/nginx/ssl
+        - name: config
+          mountPath: /etc/nginx/conf.d
+      volumes:
+      - name: tls
+        secret:
+          secretName: passthrough-test-tls
+      - name: config
+        configMap:
+          name: nginx-https-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-https-config
+  namespace: gateway-system
+data:
+  https.conf: |
+    server {
+        listen 443 ssl;
+        server_name passthrough.jtanprojects.com;
+        ssl_certificate /etc/nginx/ssl/tls.crt;
+        ssl_certificate_key /etc/nginx/ssl/tls.key;
+        location / {
+            return 200 "HTTPS Passthrough Working!\n";
+            add_header Content-Type text/plain;
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: https-echo
+  namespace: gateway-system
+spec:
+  selector:
+    app: https-echo
+  ports:
+  - port: 443
+    targetPort: 443
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: passthrough-route
+  namespace: gateway-system
+spec:
+  parentRefs:
+    - name: nginx-gateway
+      namespace: gateway-system
+      sectionName: passthrough
+  hostnames:
+    - passthrough.jtanprojects.com
+  rules:
+    - backendRefs:
+        - name: https-echo
+          port: 443
