@@ -6,3 +6,4 @@ metadata:
 data:
   cloud.override: |
     rewrite name opencloud.jtanprojects.com nginx-gateway-nginx.gateway-system.svc.cluster.local
+    rewrite name nextcloud.jtanprojects.com nginx-gateway-nginx.gateway-system.svc.cluster.local

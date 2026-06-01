@@ -1,0 +1,85 @@
+nextcloud:
+  host: nextcloud.jtanprojects.com
+  existingSecret:
+    enabled: true
+    secretName: nextcloud-secret
+    usernameKey: nextcloud-username
+    passwordKey: nextcloud-password
+  extraVolumes:
+    - name: pics
+      hostPath:
+        path: /tank/pics
+        type: Directory
+  extraVolumeMounts:
+    - name: pics
+      mountPath: /mnt/pics
+  lifecycle:
+    postStartCommand:
+      - sh
+      - -c
+      - |
+        until php occ status 2>/dev/null | grep -q "installed: true"; do
+          sleep 5
+        done
+        php occ config:system:set trusted_domains 1 --value="nextcloud.jtanprojects.com"
+        php occ config:system:set overwriteprotocol --value="https"
+        php occ config:system:set overwrite.cli.url --value="https://nextcloud.jtanprojects.com"
+        php occ config:system:set default_phone_region --value="CA"
+
+cronjob:
+  enabled: true
+
+persistence:
+  enabled: true
+  existingClaim: nextcloud-data
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+
+internalDatabase:
+  enabled: false
+
+externalDatabase:
+  enabled: true
+  type: postgresql
+  host: nextcloud-postgresql
+  database: nextcloud
+  user: nextcloud
+  existingSecret:
+    enabled: true
+    secretName: nextcloud-secret
+    usernameKey: db-username
+    passwordKey: db-password
+
+postgresql:
+  enabled: true
+  global:
+    postgresql:
+      auth:
+        database: nextcloud
+        username: nextcloud
+        existingSecret: nextcloud-secret
+        secretKeys:
+          userPasswordKey: db-password
+
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    existingSecret: nextcloud-secret
+    existingSecretPasswordKey: redis-password
+
+resources:
+  requests:
+    memory: 1Gi
+    cpu: 500m
+  limits:
+    memory: 4Gi
+    cpu: 2000m
+
+podAnnotations:
+  redeployTimestamp: "2026-05-31T19:25:00Z"

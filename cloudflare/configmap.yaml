@@ -17,6 +17,8 @@ data:
         service: http://echo.default.svc.cluster.local:80
       - hostname: cnn.jtanprojects.com
         service: http://cnn-service.default.svc.cluster.local:8501
+      - hostname: nextcloud.jtanprojects.com
+        service: http://nextcloud.nextcloud.svc.cluster.local:80
       - hostname: opencloud.jtanprojects.com
         service: http://opencloud.opencloud.svc.cluster.local:9200
       - hostname: reload.jtanprojects.com
